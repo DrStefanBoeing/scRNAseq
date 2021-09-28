@@ -1,0 +1,283 @@
+---
+title: "Add additional datasets"
+author: "Stefan Boeing"
+date: 'Compiled: `r format(Sys.Date(), "%B %d, %Y")`'
+
+output: 
+    html_document:
+        code_folding: hide
+        df_print: tibble
+        toc: true
+        toc_depth: 3
+        toc_float: true
+        css:
+    
+always_allow_html: yes
+
+---
+    
+    
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+    tidy = TRUE,
+    tidy.opts = list(width.cutoff = 120),
+    message = FALSE,
+    warning = FALSE
+)
+```
+
+
+## Part B Database
+
+
+```{r hpc_notes, include=FALSE}
+
+# module purge;source /camp/stp/babs/working/software/modulepath_new_software_tree_2018-08-13;module load pandoc/2.2.3.2-foss-2016b;ml R/3.6.0-foss-2016b-BABS;R;
+
+## Get interactive session ##
+#  srun --time=08:00:00 --mem=40G -p int --pty bash
+
+# module purge;source /camp/stp/babs/working/software/modulepath_new_software_tree_2018-08-13;module load pandoc/2.2.3.2-foss-2016b;ml R/3.6.0-foss-2016b-BABS;R;
+
+# sbatch --time=12:00:00 --wrap "module purge;source /camp/stp/babs/working/software/modulepath_new_software_tree_2018-08-13;module load pandoc/2.2.3.2-foss-2016b;ml R/3.6.0-foss-2016b-BABS;Rscript runD.r" --job-name="rD" -p hmem --mem=300G -o rD.slurm >> commands.txt
+
+# --mem-per-cpu=14G -p hmem --pty bash
+
+```
+
+
+```{r populate_meta_data_database, eval=TRUE, echo=F, results=F}
+## libraries ##
+library(tidyverse)
+library(Seurat)
+
+VersionPdfExt <- paste0(".V", gsub("-", "", Sys.Date()), ".pdf")
+
+if (dir.exists("/Volumes/babs/working/boeings/")){
+    hpc.mount <- "/Volumes/babs/working/boeings/"
+} else if (dir.exists("Y:/working/boeings/")){
+    hpc.mount <- "Y:/working/boeings/"
+} else if (dir.exists("/camp/stp/babs/working/boeings/")){
+    hpc.mount <- "/camp/stp/babs/working/boeings/"
+} else {
+    hpc.mount <- ""
+}
+
+#Create the environment and load a suitable version of R, e.g. so:
+FN <- paste0(hpc.mount, "Projects/reference_data/documentation/BC.parameters.txt")
+dbTable <- read.delim(
+    FN, 
+    sep = "\t",
+    stringsAsFactors = F
+)
+
+db.pwd <- as.vector(dbTable[1,1])
+
+
+
+
+
+
+# source(
+#     paste0(
+#         hpc.mount,
+#         "Stefan/protocol_files/github/boeings/packages/packageSourceCode/SBwebtools.pckg.r"
+#     )
+# )
+
+# source(
+#     paste0(
+#         hpc.mount,
+#         "Stefan/protocol_files/github/boeings/packages/scTools/scTools.r"
+#     )
+# )
+
+source("assets/R/scTools.r")
+source("assets/R/SBwebtools.pckg.r")
+
+
+if (length(.libPaths()) > 2){
+    .libPaths(.libPaths()[2:3])
+}
+
+ObioFN <- paste0("../", list.files("..")[grep(".bioLOGIC.Robj", list.files(".."))])
+
+if (file.exists(ObioFN)){
+    load(paste0(ObioFN))
+    print(paste0("Obio object ", Obio@parameterList$localWorkDir, ObioFN, " exists and is loaded."))
+} else {
+    exit()
+}
+
+## Reset paths to local environment
+
+
+Obio <- setMountingPoint(Obio)
+Obio <- setAnalysisPaths(Obio)
+Obio <- setCrickGenomeAndGeneNameTable(Obio)
+Obio <- createAnalysisFolders(
+    Obio,
+    baseDir="/camp/stp/babs/working/boeings/Projects/",
+    localBaseDir = paste0(hpc.mount, "Projects/")
+)
+Obio <- setDataBaseParameters(Obio)
+
+Obio@parameterList$species <- "mus_musculus"
+###############################################################################
+## Add annotation file                                                       ##
+Obio@parameterList$species <- "mus_musculus"
+Obio <- addGeneAnnotation(Obio)
+
+dfMM_Anno <- Obio@dfGeneAnnotation
+dfMM_Anno <- unique(dfMM_Anno[,c("mgi_symbol", "hgnc_symbol")])
+dfMM_Anno <- dfMM_Anno[dfMM_Anno$hgnc_symbol != "",]
+
+#Obio@parameterList$species <- "homo_sapiens"
+Obio <- addGeneAnnotation(Obio)
+
+## Done adding annotation file                                               ##
+###############################################################################
+
+```
+
+
+
+```{r populate_expr_database, eval=TRUE, echo=F, results=F}
+###############################################################################
+## Otional add extra data set                                                ##
+
+## Goal: create a table, that can be added via the 'gene' column to the main 
+## database table
+
+FN <- "/camp/stp/babs/working/boeings/Projects/hillc/danielle.park/437_fibroblast_GSE154778/auxiliarydata/WT_v_Inhba_Inbbb_null_combined.20210429.txt"
+
+dfAddCounts <- read.delim(
+    FN, 
+    header = T, 
+    sep = "\t",
+    stringsAsFactors = F
+)
+
+minC <- min(dfAddCounts$padj[dfAddCounts$padj != 0])
+
+dfAddCounts$padj[dfAddCounts$padj == 0] <- minC
+
+
+padj  <- names(dfAddCounts)[grep("padj", names(dfAddCounts))]
+            lg10p <- gsub("padj", "lg10p", padj)
+
+            for (z in 1:length(padj)){
+                preprocess <- as.numeric(dfAddCounts[,padj[z]])
+
+                if (length(grep("padj", padj[z])) > 0){
+                    preprocess <- as.numeric(dfAddCounts[,padj[z]])
+                    minNum <- min(preprocess[preprocess != 0])
+                    preprocess[preprocess == 0] <- minNum
+                } else {
+                    preprocess <- as.numeric(dfAddCounts[,padj[z]])
+                }
+
+                temp <- -1*log10(preprocess)
+                #temp[temp >= 50] = 50
+                dfAddCounts[,lg10p[z]] <- temp
+            }
+
+names(dfAddCounts) <- gsub("gene_id", "ENSMUSG", names(dfAddCounts))
+names(dfAddCounts) <- gsub("log2FoldChange", "contrast_A_logFC_bulkRNA_Seq_SS_Inhba_Inhba_KO_vs_WT", names(dfAddCounts))
+names(dfAddCounts) <- gsub("padj", "contrast_A_padj_bulkRNA_Seq_SS_Inhba_Inhba_KO_vs_WT", names(dfAddCounts))
+names(dfAddCounts) <- gsub("lg10p", "contrast_A_lg10p_bulkRNA_Seq_SS_Inhba_Inhba_KO_vs_WT", names(dfAddCounts))
+
+## Add hgnc_symbol annotation
+
+
+# dfMM_Anno <- dfMM_Anno[dfMM_Anno$mgi_symbol %in% dfAddCounts$symbol, ]
+# 
+# 
+# 
+# dfAddCounts <- merge(
+#     dfAddCounts,
+#     dfMM_Anno, 
+#     by.x = "symbol",
+#     by.y = "mgi_symbol", 
+#     all =T
+# )
+
+dfAddCounts[is.na(dfAddCounts)] <- 0
+
+names(dfAddCounts) <- gsub("symbol", "mgi_symbol", names(dfAddCounts) )
+dfAddCounts <- dfAddCounts[dfAddCounts$mgi_symbol != "",]
+
+dfAddCounts$symbol <- NULL
+dfAddCounts$ENSG <- NULL
+
+## Add Inhba correlation ##
+FN <- "../html_local/report_tables/Inhba.correlation.table.txt"
+dfAdd <- read.delim(
+    FN, 
+    header = T, 
+    sep = "\t",
+    stringsAsFactors = F
+)
+
+selVec <- c("gene", "corCoef") 
+dfAdd <- unique(dfAdd[,selVec])
+dfAddCounts <- merge(
+    dfAddCounts, 
+    dfAdd, 
+    by.x = "mgi_symbol",
+    by.y = "gene",
+    all = TRUE
+)
+
+dfAddCounts[is.na(dfAddCounts)] <- 0
+
+names(dfAddCounts) <- gsub("corCoef", "contrast_C_Inhba_Correlation_Coef", names(dfAddCounts))
+
+
+
+#dfNormCounts <- spread(data = dfNormCounts, key=condition, value=measurement)
+#names(dfNormCounts) <- paste0("norm_counts_", names(dfNormCounts))
+#names(dfNormCounts) <- gsub("norm_counts_gene", "gene", names(dfNormCounts))
+
+
+
+dfRefDatasets <- dfAddCounts
+
+
+## Done
+######################
+
+Obio@dataTableList[["dfRefDatasets"]] <- data.frame(NULL)
+Obio@dataTableList[["dfRefDatasets"]] <- dfRefDatasets
+
+#database.table[is.na(database.table)] <- 0
+## Done adding extra dataset                                                 ##
+###############################################################################
+```
+
+```{r saveobject, eval=TRUE, echo=T, results=F}
+### Will save Obio object here, so it can be re-used with different parameters
+save(Obio, 
+     file = paste0(
+         Obio@parameterList$localWorkDir,
+         Obio@parameterList$project_id,
+         ".bioLOGIC.Robj"
+     )
+)
+
+print("Obio Object saved.")
+
+# save(OsC,
+#     file = paste0(
+#          Obio@parameterList$localWorkDir,
+#          Obio@parameterList$project_id,
+#         ".Seurat.Robj"
+#      )
+# )
+
+```
+
+## Documentation
+```{r documentation, eval=TRUE, echo=T, results=T}
+sessionInfo()
+```

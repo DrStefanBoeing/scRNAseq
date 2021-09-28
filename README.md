@@ -1,2 +1,1 @@
-# scRNAseq
-A single-cell workflow
+# sc_dev
